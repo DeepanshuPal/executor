@@ -1174,6 +1174,41 @@ const normalizeSlackTokenEnvelope = async (response: Response): Promise<Response
   );
 };
 
+const ClientCredentialsGrant = Schema.Struct({
+  access_token: Schema.String,
+  token_type: Schema.optional(Schema.Unknown),
+  scope: Schema.optional(Schema.String),
+});
+const decodeClientCredentialsGrant = Schema.decodeUnknownOption(ClientCredentialsGrant);
+
+/** Some providers (Shopify Admin API) answer a successful client_credentials
+ * grant with only `access_token`, `scope` and `expires_in`. RFC 6749 requires
+ * `token_type`, and oauth4webapi rejects the response without it. Default it to
+ * Bearer for this grant only, and read a comma-separated `scope` as a list.
+ * Responses that already carry a `token_type` are returned untouched. */
+const normalizeClientCredentialsResponse = async (response: Response): Promise<Response> => {
+  if (!response.ok) return response;
+  const body = await safeJsonFromResponse(response);
+  const decoded = decodeClientCredentialsGrant(body);
+  if (Option.isNone(decoded) || decoded.value.token_type !== undefined) return response;
+  const scope = decoded.value.scope
+    ?.split(/[\s,]+/)
+    .filter(Boolean)
+    .join(" ");
+  return new Response(
+    JSON.stringify({
+      ...(body as Record<string, unknown>),
+      token_type: "Bearer",
+      ...(scope ? { scope } : {}),
+    }),
+    {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    },
+  );
+};
+
 const processTokenEndpointResponse = async (
   as: oauth.AuthorizationServer,
   client: oauth.Client,
@@ -1393,7 +1428,11 @@ export const exchangeClientCredentials = (
           input.fetch,
         ),
       );
-      const result = await oauth.processClientCredentialsResponse(as, client, response);
+      const result = await oauth.processClientCredentialsResponse(
+        as,
+        client,
+        await normalizeClientCredentialsResponse(response),
+      );
       return tokenResponseFrom(as, result);
     },
     catch: (cause) => cause,
