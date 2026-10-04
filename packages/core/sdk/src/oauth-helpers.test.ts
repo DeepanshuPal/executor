@@ -1379,6 +1379,44 @@ describe("exchangeClientCredentials", () => {
     ),
   );
 
+  it.effect("defaults token_type to Bearer when a client_credentials response omits it", () =>
+    withTokenEndpoint(
+      // Shopify Admin API shape: no token_type, comma-separated scope.
+      tokenResponse({
+        access_token: "shpat_tok",
+        scope: "read_products,write_products",
+        expires_in: 86399,
+      }),
+      ({ tokenUrl }) =>
+        Effect.gen(function* () {
+          const token = yield* exchangeClientCredentials({
+            tokenUrl,
+            clientId: "cid",
+            clientSecret: "secret",
+          });
+          expect(token.access_token).toBe("shpat_tok");
+          expect(token.token_type).toBe("bearer");
+          expect(token.scope).toBe("read_products write_products");
+          expect(token.expires_in).toBe(86399);
+        }),
+    ),
+  );
+
+  it.effect("keeps an explicit token_type on a client_credentials response", () =>
+    withTokenEndpoint(
+      tokenResponse({ access_token: "tok", token_type: "DPoP", expires_in: 60 }),
+      ({ tokenUrl }) =>
+        Effect.gen(function* () {
+          const token = yield* exchangeClientCredentials({
+            tokenUrl,
+            clientId: "cid",
+            clientSecret: "secret",
+          });
+          expect(token.token_type).toBe("dpop");
+        }),
+    ),
+  );
+
   it.effect("rejects unsupported token URL schemes before exchange", () =>
     Effect.gen(function* () {
       const exit = yield* Effect.exit(
